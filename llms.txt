@@ -1,0 +1,62 @@
+# fuji-geotag
+
+> A small bash + exiftool wrapper that backfills GPS coordinates into camera
+> files (RAW / HEIF / JPG) from a GPX track, **without destroying camera
+> MakerNotes** (Film Simulation, Lens info, Dynamic Range, custom settings,
+> etc.).
+
+Default name is `fuji-geotag` because it was written for Fujifilm RAF/HIF
+files, but the underlying technique (`exiftool -overwrite_original_in_place`)
+works for any vendor: Sony ARW, Nikon NEF, Canon CR3, etc. Adjust `--exts`.
+
+## The core technique
+
+Naive `exiftool -geotag` rebuilds the file structure and can drop the
+MakerNote block. The fix is a single flag:
+
+```bash
+exiftool -overwrite_original_in_place -P -m \
+  -geotag=<gpx> -geosync=<tz> -api GeoMaxExtSecs=<n> <files>
+```
+
+`-overwrite_original_in_place` patches the existing bytes for the affected
+tags only. Verified: MakerNote tag count before == after.
+
+## Files
+
+- [README.md](README.md): full documentation, options, examples
+- [fuji-geotag](fuji-geotag): the script itself (single-file bash)
+- [LICENSE](LICENSE): MIT
+
+## Usage in one line
+
+```bash
+fuji-geotag --gpx track.gpx --dir /path/to/photos --date 2026-06-01
+```
+
+Defaults: looks for files missing GPS, filters by `DateTimeOriginal`, backs
+up to `/tmp/fuji-geotag-backup-<ts>/`, runs the safe exiftool invocation,
+verifies MakerNote tag count after.
+
+## When to reach for it
+
+- You shoot RAW + JPEG/HEIF on a camera without built-in GPS.
+- You record a phone-side GPX track (Strava, Step Of My World, MotionX, etc.).
+- You want GPS in EXIF without LightRoom / proprietary tooling.
+- You've been burned before by exiftool stripping vendor MakerNotes.
+
+## When *not* to use it
+
+- You only want to view the location on a map — just open the GPX next to
+  the photos in your DAM of choice.
+- Your camera already writes GPS and you trust it.
+- You need per-photo location editing — use a GUI tool.
+
+## Requirements
+
+- `exiftool` 12+ (`brew install exiftool`)
+- `bash` 4+ (macOS users: brew bash, or any modern Linux)
+
+## Repository
+
+https://github.com/Innei/fuji-geotag
