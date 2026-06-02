@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# fuji-geotag — backfill GPS into Fujifilm RAF/HIF/JPG from a GPX track,
+# preserving MakerNotes (Fujifilm film simulation, lens info, etc.).
+#
+# Verified safe for Fujifilm RAF: uses -overwrite_original_in_place which
+# rewrites GPS tags without rebuilding the file structure that holds
+# MakerNotes. Tested on darktable-cli + exiftool 13.x.
+
+set -euo pipefail
+
+GPX=""
+DIR="."
+TZ_OFFSET="-9:00"
+MAX_EXT=1800
+EXTS_CSV="RAF,HIF,JPG"
+DATE_FILTER=""
+DRY_RUN=0
+NO_BACKUP=0
+BACKUP_DIR=""
+INCLUDE_WITH_GPS=0
+RECURSIVE=0
+VERBOSE=0
+
+die() { echo "fuji-geotag: $*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+fuji-geotag — backfill GPS from GPX into Fujifilm RAF/HIF/JPG (MakerNotes-safe)
+
+Usage:
+  fuji-geotag --gpx <file.gpx> [--dir <photo-dir>] [options]
+
+Required:
+  --gpx <file>          GPX track file
+
+Common:
+  --dir <path>          Photo directory (default: .)
+  --date <YYYY-MM-DD>   Only files whose DateTimeOriginal matches this prefix
+                        (e.g. 2026-06-01, or 2026-06 for whole month)
+  --tz <±H:MM>          Camera-local to GPX-UTC offset (default -9:00 = JST)
+  --max-ext <secs>      GeoMaxExtSecs (extrapolation tolerance, default 1800)
+  --exts <CSV>          File extensions (default RAF,HIF,JPG)
+  -r, --recursive       Descend into subdirectories
+  --include-with-gps    Also overwrite files that already have GPS
+                        (default: only files missing GPSLatitude)
+
+Safety:
+  -n, --dry-run         List candidate files without writing
+  --no-backup           Skip backup copy (default: backup to /tmp/<auto>)
+  --backup-dir <path>   Custom backup directory
+
+  -v, --verbose         Verbose output
+  -h, --help            This help
+
+Examples:
+  # Backfill all photos in current dir from yesterday
+  fuji-geotag --gpx ~/Downloads/track.gpx --date 2026-06-01
+
+  # Preview what would change for a specific day
+  fuji-geotag --gpx track.gpx --dir /Volumes/Camera/DCIM/100_FUJI \
+              --date 2026-06-02 --dry-run
+
+  # Overwrite existing GPS too (use new GPX as authoritative)
+  fuji-geotag --gpx better.gpx --include-with-gps
+
+Behavior:
+  1. Find files in <dir> matching extensions [and date filter] [and missing GPS]
+  2. Copy each candidate to backup dir (unless --no-backup)
+  3. exiftool -overwrite_original_in_place -P -m \
+       -geotag=<gpx> -geosync=<tz> -api GeoMaxExtSecs=<n>
+  4. Verify post-write: GPS coverage + MakerNote tag count vs backup
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --gpx) GPX="$2"; shift 2 ;;
+    --dir) DIR="$2"; shift 2 ;;
+    --date) DATE_FILTER="$2"; shift 2 ;;
+    --tz) TZ_OFFSET="$2"; shift 2 ;;
+    --max-ext) MAX_EXT="$2"; shift 2 ;;
+    --exts) EXTS_CSV="$2"; shift 2 ;;
+    -r|--recursive) RECURSIVE=1; shift ;;
+    --include-with-gps) INCLUDE_WITH_GPS=1; shift ;;
+    -n|--dry-run) DRY_RUN=1; shift ;;
+    --no-backup) NO_BACKUP=1; shift ;;
+    --backup-dir) BACKUP_DIR="$2"; shift 2 ;;
+    -v|--verbose) VERBOSE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+
+[ -n "$GPX" ] || die "missing --gpx"
+[ -f "$GPX" ] || die "GPX file not found: $GPX"
+[ -d "$DIR" ] || die "photo dir not found: $DIR"
+command -v exiftool >/dev/null || die "exiftool not installed (brew install exiftool)"
+
+# Build exiftool args (shared across discover/write)
+EXT_ARGS=()
+IFS=',' read -ra EXT_ARR <<< "$EXTS_CSV"
+for e in "${EXT_ARR[@]}"; do EXT_ARGS+=(-ext "$e"); done
+[ "$RECURSIVE" = 1 ] && EXT_ARGS+=(-r)
+
+IF_ARGS=()
+[ "$INCLUDE_WITH_GPS" = 0 ] && IF_ARGS+=(-if 'not $GPSLatitude')
+if [ -n "$DATE_FILTER" ]; then
+  # Convert YYYY-MM-DD → YYYY:MM:DD (EXIF date format)
+  DATE_EXIF="${DATE_FILTER//-/:}"
+  IF_ARGS+=(-if "\$DateTimeOriginal =~ /^${DATE_EXIF}/")
+fi
+
+# Discover candidate files
+mapfile -t FILES < <(exiftool -q "${IF_ARGS[@]}" "${EXT_ARGS[@]}" \
+  -p '$Directory/$FileName' "$DIR" 2>/dev/null | sort)
+
+N=${#FILES[@]}
+if [ "$N" -eq 0 ]; then
+  echo "fuji-geotag: no candidate files found"
+  exit 0
+fi
+
+echo "fuji-geotag: $N candidate file(s)"
+if [ "$VERBOSE" = 1 ] || [ "$DRY_RUN" = 1 ]; then
+  printf '  %s\n' "${FILES[@]}"
+fi
+
+if [ "$DRY_RUN" = 1 ]; then
+  echo "fuji-geotag: dry run, nothing written"
+  exit 0
+fi
+
+# Backup
+if [ "$NO_BACKUP" = 0 ]; then
+  if [ -z "$BACKUP_DIR" ]; then
+    BACKUP_DIR="/tmp/fuji-geotag-backup-$(/bin/date +%Y%m%d-%H%M%S)"
+  fi
+  mkdir -p "$BACKUP_DIR"
+  echo "fuji-geotag: backing up to $BACKUP_DIR"
+  for f in "${FILES[@]}"; do
+    cp -n "$f" "$BACKUP_DIR/$(basename "$f")"
+  done
+fi
+
+# Write GPS (the MakerNote-safe invocation)
+echo "fuji-geotag: writing GPS..."
+exiftool -overwrite_original_in_place -P -m \
+  -geotag="$GPX" "-geosync=$TZ_OFFSET" \
+  -api "GeoMaxExtSecs=$MAX_EXT" \
+  "${FILES[@]}"
+
+# Verify
+echo "fuji-geotag: verifying..."
+NO_GPS=$(exiftool -q -if 'not $GPSLatitude' -p '$FileName' "${FILES[@]}" 2>/dev/null | wc -l | tr -d ' ')
+echo "  files still missing GPS: $NO_GPS / $N"
+
+if [ "$NO_BACKUP" = 0 ] && [ "$N" -gt 0 ]; then
+  SAMPLE="${FILES[0]}"
+  BASE=$(basename "$SAMPLE")
+  if [ -f "$BACKUP_DIR/$BASE" ]; then
+    BEFORE=$(exiftool -G -a -s -MakerNotes:all "$BACKUP_DIR/$BASE" 2>/dev/null | wc -l | tr -d ' ')
+    AFTER=$(exiftool -G -a -s -MakerNotes:all "$SAMPLE" 2>/dev/null | wc -l | tr -d ' ')
+    echo "  MakerNotes sample ($BASE): $BEFORE → $AFTER tags"
+    if [ "$BEFORE" != "$AFTER" ]; then
+      echo "fuji-geotag: WARNING MakerNote count changed, inspect $BACKUP_DIR" >&2
+      exit 2
+    fi
+  fi
+fi
+
+echo "fuji-geotag: done."
+[ "$NO_BACKUP" = 0 ] && echo "  backup retained at $BACKUP_DIR (rm -rf when verified)"
