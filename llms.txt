@@ -30,8 +30,17 @@ tags only. Verified: MakerNote tag count before == after.
 
 ## Usage in one line
 
+Installed:
+
 ```bash
 fuji-geotag --gpx track.gpx --dir /path/to/photos --date 2026-06-01
+```
+
+Ad-hoc, no install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Innei/fuji-geotag/main/fuji-geotag \
+  | bash -s -- --gpx track.gpx --dir . --date 2026-06-01
 ```
 
 Defaults: looks for files missing GPS, filters by `DateTimeOriginal`, backs

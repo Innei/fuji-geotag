@@ -38,7 +38,16 @@ exiftool -overwrite_original_in_place -P -m \
 - `-geosync=<±H:MM>` — offset of camera local time vs GPX UTC
 - `-api GeoMaxExtSecs=<n>` — extrapolation tolerance in seconds
 
-## Installing the script
+## Running the script
+
+One-shot, no install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Innei/fuji-geotag/main/fuji-geotag \
+  | bash -s -- --gpx ~/Downloads/track.gpx --dir . --date 2026-06-01
+```
+
+Or install permanently:
 
 ```bash
 curl -fsSL -o ~/.local/bin/fuji-geotag \

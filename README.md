@@ -46,6 +46,17 @@ The script also:
   except `mapfile`, which is 4+. **TODO**: replace `mapfile` with a portable
   loop if 3.x support matters.)
 
+## Run without installing
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Innei/fuji-geotag/main/fuji-geotag \
+  | bash -s -- --gpx ~/Downloads/track.gpx --dir /Volumes/Camera/DCIM/100_FUJI \
+                --date 2026-06-01 --dry-run
+```
+
+Everything after `--` is passed to the script as if you'd installed it. Good
+for one-shot use; review the source first if you want to be paranoid.
+
 ## Install
 
 ```bash
